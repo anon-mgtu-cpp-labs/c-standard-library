@@ -260,10 +260,18 @@ int load_intvalue(_get_func_t get, _unget_func_t unget, void *src, char s[], siz
         return 0;
     else {
         int (*is_digit)(int) = is_hex ? isxdigit : isdigit;
-        size_t i = 0;
+        size_t i = 0, iend;
 
         /* Get a count of valid locale friendly integer characters */
-        n = integer_end(get, unget, src, n);
+        iend = integer_end(get, unget, src, n);
+
+        if (!iend) {
+            /* There are no valid groups */
+            return 0;
+        }
+
+        /* integer_end returns the index of the last valid character, we want a count */
+        n = iend + 1;
 
         while (n--) {
             int ch = get(src, &read_count);
@@ -397,6 +405,11 @@ size_t integer_end(_get_func_t get, _unget_func_t unget, void *src, size_t n)
     int top = 0;
     size_t i = 0;
 
+    if (!*localeconv()->thousands_sep) {
+        /* Avoid potentially a lot of work if the locale doesn't support separators */
+        return n;
+    }
+
     /* Find the end of the possible characters */
     while (i++ < n && (stack[top] = get(src, &read_count)) != EOF && !isspace(stack[top]))
         ++top;
@@ -436,7 +449,7 @@ size_t integer_end(_get_func_t get, _unget_func_t unget, void *src, size_t n)
             grouping = localeconv()->grouping;
             group_size = *grouping;
             group_len = 0;
-            i = top;
+            i = top - 1;
         }
 
         unget(&stack[top--], src, &read_count);
