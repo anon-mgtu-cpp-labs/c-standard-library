@@ -40,16 +40,19 @@ int _printf(_put_func_t put, void *dst, const char *fmt, size_t n, va_list args)
     write_count = 0;
 
     while (*fmt) {
-        char tempbuf[2] = {0}; /* Temporary buffer for single character output */
-        char *padbuf = NULL;   /* Full string encoding (buffer used) */
-
         if (*fmt != '%') {
             /* Easy case: literal format string character */
-            tempbuf[0] = *fmt++;
-            padbuf = tempbuf;
+            char ch = *fmt++;
+
+            if (!put(&ch, dst, 1, &write_count, write_limit)) {
+                error_state = EIO;
+                break;
+            }
         }
         else {
             size_t count = _load_printspec(&spec, fmt);
+            char tempbuf[2] = {0}; /* Temporary buffer for single character output */
+            char *padbuf = NULL;   /* Full string encoding (buffer used) */
 
             if (count == 0) {
                 /* The specifier was invalid */
@@ -113,12 +116,12 @@ int _printf(_put_func_t put, void *dst, const char *fmt, size_t n, va_list args)
                     spec.alt_case, 
                     spec.flags & _SHOW_SIGN);
             }
-        }
 
-        if (padbuf) {
-            /* We encoded a full buffer, so it needs to be padded */
-            if (!pad_buffer(put, dst, padbuf, &spec))
-                break;
+            if (padbuf) {
+                /* We encoded a full buffer, so it needs to be padded */
+                if (!pad_buffer(put, dst, padbuf, &spec))
+                    break;
+            }
         }
     }
 
