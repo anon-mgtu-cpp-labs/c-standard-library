@@ -20,7 +20,7 @@ static int load_strvalue(_get_func_t get, _unget_func_t unget, void *src, char s
 static int load_intvalue(_get_func_t get, _unget_func_t unget, void *src, char s[], size_t n, int is_unsigned, int is_hex);
 static int load_fpvalue(_get_func_t get, _unget_func_t unget, void *src, char s[], size_t n, int is_hex);
 
-static size_t integer_end(_get_func_t get, _unget_func_t unget, void *src, size_t n);
+static size_t integer_end(_get_func_t get, _unget_func_t unget, void *src, size_t n, int base);
 
 static int trim_leading(_get_func_t get, _unget_func_t unget, void *src);
 static int match_literal(_get_func_t get, _unget_func_t unget, void *src, char match);
@@ -130,7 +130,7 @@ int _scanf(_get_func_t get, _unget_func_t unget, void *src, const char *fmt, va_
             }
             else if (spec.type >= _SPEC_UCHAR && spec.type <= _SPEC_PTRDIFFT) {
                 /* Extract and convert unsigned integer values */
-                n = load_intvalue(get, unget, src, s, spec.field_width, true, spec.format == _SPEC_FMT_HEX);
+                n = load_intvalue(get, unget, src, s, spec.field_width, true, spec.format);
 
                 if (n == 0 && converted == 0)
                     break;
@@ -254,24 +254,23 @@ int load_strvalue(_get_func_t get, _unget_func_t unget, void *src, char s[], siz
     @description:
         Extracts a valid integer string representation into the specified buffer.
 */
-int load_intvalue(_get_func_t get, _unget_func_t unget, void *src, char s[], size_t n, int is_unsigned, int is_hex)
+int load_intvalue(_get_func_t get, _unget_func_t unget, void *src, char s[], size_t n, int is_unsigned, int base)
 {
     if (trim_leading(get, unget, src) == EOF)
         return 0;
     else {
-        int (*is_digit)(int) = is_hex ? isxdigit : isdigit;
         size_t i = 0, iend;
 
+        if (!base)
+            base = 10; /* Assume decimal */
+
         /* Get a count of valid locale friendly integer characters */
-        iend = integer_end(get, unget, src, n);
+        iend = integer_end(get, unget, src, n, base);
 
         if (!iend) {
             /* There are no valid groups */
             return 0;
         }
-
-        /* integer_end returns the index of the last valid character, we want a count */
-        n = iend + 1;
 
         while (n--) {
             int ch = get(src, &read_count);
@@ -288,8 +287,8 @@ int load_intvalue(_get_func_t get, _unget_func_t unget, void *src, char s[], siz
                         break;
                     }
                 }
-                else if (!is_digit(ch)) {
-                    if (!(is_hex && i == 1 && tolower(ch) == 'x')) {
+                else if (_digitvalue(ch, base) == -1) {
+                    if (!(base == 16 && i == 1 && tolower(ch) == 'x')) {
                         /* Alternate format characters aren't in an expected location */
                         unget(&ch, src, &read_count);
                         break;
@@ -327,7 +326,24 @@ int load_fpvalue(_get_func_t get, _unget_func_t unget, void *src, char s[], size
         int last = EOF;
         size_t i, iend;
 
-        iend = integer_end(get, unget, src, n);
+        /* Find the end of the integer part of the mantissa */
+        iend = integer_end(get, unget, src, n, 10);
+
+        /*
+            At this point iend is either greater than zero (there was a 
+            valid integer part), or it's zero (no integer part) and the
+            next character is a decimal point. Anything else represents
+            a format error for the value.
+        */
+        if (!iend) {
+            int ch = get(src, &read_count);
+
+            /* ch being EOF falls into this test naturally */
+            if (ch != *localeconv()->decimal_point) {
+                unget(&ch, src, &read_count);
+                return 0;
+            }
+        }
 
         for (i = 0; i < n; ++i) {
             int ch = get(src, &read_count);
@@ -397,7 +413,7 @@ int load_fpvalue(_get_func_t get, _unget_func_t unget, void *src, char s[], size
         Locates the end of the first valid integer string from the source.
         This function is aware of the current locale's LC_NUMERIC setting.
 */
-size_t integer_end(_get_func_t get, _unget_func_t unget, void *src, size_t n)
+size_t integer_end(_get_func_t get, _unget_func_t unget, void *src, size_t n, int base)
 {
     char *grouping = localeconv()->grouping;
     int group_len = 0, group_size = *grouping;
@@ -420,36 +436,40 @@ size_t integer_end(_get_func_t get, _unget_func_t unget, void *src, size_t n)
     }
 
     while (top >= 0) {
-        if (top > 0 && group_size && ++group_len == group_size) {
+        if (top == 0 && group_size && _digitvalue(stack[i], base) != -1)
+            i = 0;
+        else if (top > 0 && group_size && ++group_len == group_size) {
             if (top - 1 == 0 || stack[top - 1] != *localeconv()->thousands_sep) {
-                /* Invalid group separator, mark the end and proceed */
+                /* Invalid group: reset grouping, mark the end and proceed */
                 grouping = localeconv()->grouping;
                 group_size = *grouping;
                 group_len = 0;
-                i = top - 1;
+                i = top; /* Save 1 past the last valid character */
             }
             else {
-                unget(&stack[top--], src, &read_count);
-
+                /* Valid group: move to the next grouping level */
                 if (*grouping && *++grouping)
                     group_size = *grouping;
 
                 group_len = 0;
+
+                /* Skip over the separator so we don't error on the next iteration */
+                unget(&stack[top--], src, &read_count);
             }
         }
-        else if ((stack[top] == '-' || stack[top] == '+') && top != 0) {
+        else if ((stack[top] == '-' || stack[top] == '+') && top > 0) {
             /* Invalid sign: reset grouping, mark the end and proceed */
             grouping = localeconv()->grouping;
             group_size = *grouping;
             group_len = 0;
-            i = top;
+            i = top; /* Save 1 past the last valid character */
         }
-        else if (!(stack[top] == '-' || stack[top] == '+') && _digitvalue(stack[top], 10) == -1) {
+        else if (!(stack[top] == '-' || stack[top] == '+') && _digitvalue(stack[top], base) == -1) {
             /* Invalid digit: reset grouping, mark the end and proceed */
             grouping = localeconv()->grouping;
             group_size = *grouping;
             group_len = 0;
-            i = top - 1;
+            i = top; /* Save 1 past the last valid character */
         }
 
         unget(&stack[top--], src, &read_count);

@@ -378,6 +378,14 @@ unsigned long long strtoull(const char * restrict s, char ** restrict end, int b
     /* Find the end of the first locale-friendly numeric string */
     num_end = integer_end(it, it + strlen(it), base);
 
+    if (num_end == it) {
+        /* There are no valid groups */
+        if (end)
+            *end = (char*)s;
+
+        return 0;
+    }
+
     /* Build the value */
     for (n = 0; it != num_end; ++n, ++it) {
         if (memcmp(it, sep, sep_len) == 0)
@@ -928,23 +936,26 @@ const char *integer_end(const char *first, const char *last, int base)
     const char *it = end - 1;
 
     for (;;) {
-        if (it != first && group_size && ++group_len == group_size) {
+        if (it == first && group_size && _digitvalue(*end, base) != -1)
+            end = first;
+        else if (it != first && group_size && ++group_len == group_size) {
             /* Check for a group separator */
             if (it - 1 == first || it[-1] != *localeconv()->thousands_sep) {
                 /* Invalid group: reset grouping, mark the end and proceed */
                 grouping = localeconv()->grouping;
                 group_size = *grouping;
                 group_len = 0;
-                end = --it;
+                end = it; /* Save 1 past the last valid character */
             }
             else {
-                /* Valid group: jump over the separator and move to the next group */
-                --it;
-
+                /* Valid group: move to the next grouping level */
                 if (*grouping && *++grouping)
                     group_size = *grouping;
 
                 group_len = 0;
+
+                /* Skip over the separator so we don't error on the next iteration */
+                --it;
             }
         }
         else if ((*it == '-' || *it == '+') && it != first) {
@@ -952,18 +963,20 @@ const char *integer_end(const char *first, const char *last, int base)
             grouping = localeconv()->grouping;
             group_size = *grouping;
             group_len = 0;
-            end = it;
+            end = it; /* Save 1 past the last valid character */
         }
         else if (!(*it == '-' || *it == '+') && _digitvalue(*it, base) == -1) {
             /* Invalid digit: reset grouping, mark the end and proceed */
             grouping = localeconv()->grouping;
             group_size = *grouping;
             group_len = 0;
-            end = it;
+            end = it; /* Save 1 past the last valid character */
         }
 
-        if (it-- == first)
+        if (it == first)
             break;
+
+        --it;
     }
 
     return end;
