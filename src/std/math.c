@@ -1,4 +1,5 @@
 #include "errno.h"
+#include "fenv.h"
 #include "float.h"
 #include "limits.h"
 #include "math.h"
@@ -398,7 +399,159 @@ double floor(double value)
 
 /*
     @description:
-        Computes the floating point version of value / y.
+        Rounds the argument to an integer value in floating point
+        format, using the current rounding direction and without
+        raising the "inexact" floating point exception.
+*/
+double nearbyint(double value)
+{
+    double rounded;
+    fenv_t save;
+
+    feholdexcept(&save);
+    rounded = rint(value);
+    fesetenv(&save);
+
+    return rounded;
+}
+
+/*
+    @description:
+        Differs from the nearbyint function only in that the
+        "inexact" floating point exception may be raised.
+*/
+double rint(double value)
+{
+    switch (fegetround()) {
+    case FE_TONEAREST:  return round(value);
+    case FE_TOWARDZERO: return trunc(value);
+    case FE_UPWARD:     return ceil(value);
+    case FE_DOWNWARD:   return floor(value);
+    default:            return 0; /* Shouldn't happen */
+    }
+}
+
+/*
+    @description:
+        Rounds the argument to the nearest integer value, rounding
+        according to the current rounding direction.
+*/
+long lrint(double value)
+{
+    double rounded = rint(value);
+
+    if (rounded > LONG_MAX) {
+        errno = ERANGE;
+        return LONG_MAX;
+    }
+    else if (rounded < LONG_MIN) {
+        errno = ERANGE;
+        return LONG_MIN;
+    }
+
+    return (long)rounded;
+}
+
+/*
+    @description:
+        Rounds the argument to the nearest integer value, rounding
+        according to the current rounding direction.
+*/
+long long llrint(double value)
+{
+    double rounded = rint(value);
+
+    if (rounded > LLONG_MAX) {
+        errno = ERANGE;
+        return LLONG_MAX;
+    }
+    else if (rounded < LLONG_MIN) {
+        errno = ERANGE;
+        return LLONG_MIN;
+    }
+
+    return (long long)rounded;
+}
+
+/*
+    @description:
+        Rounds the argument to the nearest integer in floating point
+        format, rounding halfway cases away from zero, regardless of
+        current rounding direction.
+*/
+double round(double value)
+{
+    int negative = value < 0.0;
+    double rounded = negative ? ceil(value) : floor(value);
+    double diff = negative ? rounded - value : value - rounded;
+
+    if (diff >= 0.5)
+        rounded = negative ? rounded - 1.0 : rounded + 1.0;
+
+    return rounded;
+}
+
+/*
+    @description:
+        Rounds the argument to the nearest integer value, rounding 
+        halfway cases away from zero, regardless of current rounding 
+        direction.
+*/
+long lround(double value)
+{
+    double rounded = round(value);
+
+    if (rounded > LONG_MAX) {
+        errno = ERANGE;
+        return LONG_MAX;
+    }
+    else if (rounded < LONG_MIN) {
+        errno = ERANGE;
+        return LONG_MIN;
+    }
+
+    return (long)rounded;
+}
+
+/*
+    @description:
+        Rounds the argument to the nearest integer value, rounding 
+        halfway cases away from zero, regardless of current rounding 
+        direction.
+*/
+long long llround(double value)
+{
+    double rounded = round(value);
+
+    if (rounded > LLONG_MAX) {
+        errno = ERANGE;
+        return LLONG_MAX;
+    }
+    else if (rounded < LLONG_MIN) {
+        errno = ERANGE;
+        return LLONG_MIN;
+    }
+
+    return (long long)rounded;
+}
+
+/*
+    @description:
+        Rounds the argument to the integer value, in floating format,
+        nearest to but no larger in magnitude than the argument.
+*/
+double trunc(double value)
+{
+    double ipart;
+
+    modf(value, &ipart);
+    
+    return ipart;
+}
+
+/*
+    @description:
+        Computes the floating point remainder of value / y.
 */
 double fmod(double value, double y)
 {
@@ -417,6 +570,74 @@ double fmod(double value, double y)
     }
 
     return y * modf(value / y, &temp);
+}
+
+/*
+    @description:
+        Produces a value with the magnitude of value and the sign of y.
+*/
+double copysign(double value, double y)
+{
+    _real8_t fpv;
+
+    fpv.fvalue = value;
+    fpv.parts.sign = signbit(y);
+
+    return fpv.fvalue;
+}
+
+/*
+    @description:
+        Returns a quiet NaN, if available, with content indicated through tagp.
+*/
+double nan(const char *tagp)
+{
+    (void)tagp; /* Avoid an unused variable warning */
+
+    /*
+        nan() is defined in the standard in terms of strtod(), but
+        strtod() simply returns a quiet NaN and ignores the optional
+        tag information. Therefore we'll skip that step and just
+        return a quiet NaN directly. :-)
+    */
+    return _quiet_nand();
+}
+
+/*
+    @description:
+        Determines the positive difference between x and y.
+*/
+double fdim(double x, double y)
+{
+    double diff;
+
+    if (x <= y)
+        return 0;
+
+    diff = x - y;
+
+    if (!isfinite(diff))
+        errno = ERANGE;
+
+    return diff;
+}
+
+/*
+    @description:
+        Determines the maximum numeric value of the arguments.
+*/
+double fmax(double x, double y)
+{
+    return (isgreaterequal(x, y) || isnan(y)) ? x : y;
+}
+
+/*
+    @description:
+        Determines the minimum numeric value of the arguments.
+*/
+double fmin(double x, double y)
+{
+    return (islessequal(x, y) || isnan(y)) ? x : y;
 }
 
 /*
@@ -453,6 +674,42 @@ int _fpclassifyd(double value)
         return fpv.parts.mantissa == 0 ? FP_INFINITE : FP_NAN;
 
     return FP_NORMAL;
+}
+
+/*
+    @description:
+        Compares two floating point values.
+*/
+int _fpcompared(double a, double b)
+{
+    if (isnan(a) && isnan(b))
+        return 0;
+    else if (isnan(a))
+        return +1;
+    else if (isnan(b))
+        return -1;
+    else {
+        _real8_t fpv1, fpv2;
+
+        fpv1.fvalue = a;
+        fpv2.fvalue = b;
+
+        if (fpv1.ivalue < fpv2.ivalue)
+            return -1;
+        else if (fpv1.ivalue > fpv2.ivalue)
+            return +1;
+        else
+            return 0;
+    }
+}
+
+/*
+    @description:
+        Checks for an unordered relationship with NaNs.
+*/
+int _fpunoderedd(double a, double b)
+{
+    return isnan(a) || isnan(b);
 }
 
 /*

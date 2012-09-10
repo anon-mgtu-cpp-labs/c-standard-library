@@ -57,7 +57,7 @@ char *_dtoa(char s[], double value, int precision, int show_sign, int show_zeros
 
         /* There weren't any integer part digits */
         if (i == 0 || (!isdigit(s[0]) && i == 1))
-            s[i++] = (char)(fmod(ipart, 10) + '0');
+            s[i++] = (char)((int)fmod(ipart, 10) + '0');
 
         s[i] = '\0';                               /* Close the string for _strrev */
         _strrev(s + (s[0] == '-' || s[0] == '+')); /* Reverse the integer part */
@@ -66,7 +66,7 @@ char *_dtoa(char s[], double value, int precision, int show_sign, int show_zeros
         /* Build the fractional part with zero fill up to the precision */
         for (i = strlen(s); --precision >= 0; ++i) {
             fpart *= 10;
-            s[i] = (char)(fmod(fpart, 10) + '0');
+            s[i] = (char)((int)fmod(fpart, 10) + '0');
         }
 
         /* Remove trailing zeros if necessary */

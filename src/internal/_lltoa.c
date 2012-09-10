@@ -18,7 +18,9 @@ char *_lltoa(char s[], long long value, int radix, int show_sign, int alt_case, 
     if (value < 0 || show_sign)
         s[i++] = (value < 0) ? '-' : '+';
 
-    return _ulltoa(&s[i], llabs(value), radix, alt_case, ignore_locale);
+    _ulltoa(&s[i], llabs(value), radix, alt_case, ignore_locale);
+
+    return s;
 }
 
 /*
